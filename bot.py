@@ -1,8 +1,8 @@
 """
-- Fetches proxies from multiple public sources
+- Fetches UHQ proxies (elite, low-latency) from multiple public sources
 - Checks live proxies concurrently
 - Prunes dead or slow proxies automatically
-- Shares live proxies to a Telegram chat
+- Shares proxies in ip:port:username:pass format to Telegram chat
 """
 
 import asyncio
@@ -21,23 +21,24 @@ from aiogram import Bot
 TOKEN = "8293451482:AAHVbqblT4O35Hn0HZG_-osVMAOsI-mF6Ko"
 CHAT_ID = 8073139751
 TEST_URL = "https://httpbin.org/ip"
-TIMEOUT = 8
+TIMEOUT = 5  # Reduced for UHQ proxies
 CONCURRENCY = 200
 REFRESH_INTERVAL = 600  # seconds between fetch cycles
 PRUNE_INTERVAL = 7200   # seconds between pruning cycles
-MAX_LATENCY_MS = 500    # only keep proxies faster than this
+MAX_LATENCY_MS = 200    # Stricter for UHQ proxies
 USER_AGENT = "Mozilla/5.0 (compatible; YUICHI-proxy-collector/1.0)"
 IPPORT_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b")
+DEFAULT_CREDENTIALS = "user:pass"  # Placeholder for unauthenticated proxies
 
 # ---------------- SOURCES ---------------- #
-GEONODE_API = "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc"
+GEONODE_API = "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc&anonymity=elite"
 PROXYSCRAPE_API = (
     "https://api.proxyscrape.com/v2/?request=getproxies"
-    "&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"
+    "&protocol=http&timeout=5000&country=all&ssl=all&anonymity=elite"
 )
 FREE_PROXY_URL = "https://free-proxy-list.net/"
 
-# TheSpeedX raw proxy lists
+# TheSpeedX raw proxy lists (no anonymity filter available)
 SPEEDX_HTTP = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
 SPEEDX_HTTPS = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/https.txt"
 SPEEDX_SOCKS = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"
@@ -59,7 +60,7 @@ init(autoreset=True, strip=True, convert=True)
 def print_banner():
     banner = f"{Fore.GREEN}{Style.BRIGHT}{YUICHI_BANNER}{Style.RESET_ALL}"
     print(banner)
-    print(f"{Fore.CYAN}        Continuous Proxy Collector — By YUICHI\n{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}        UHQ Proxy Collector — By YUICHI\n{Style.RESET_ALL}")
 
 # ---------------- FETCHING ---------------- #
 def fetch_from_geonode():
@@ -72,7 +73,7 @@ def fetch_from_geonode():
                 ip = item.get("ip") or item.get("address") or ""
                 port = str(item.get("port") or "")
                 if ip and port:
-                    out.add(f"{ip}:{port}")
+                    out.add(f"{ip}:{port}:{DEFAULT_CREDENTIALS}")
     except Exception:
         pass
     return out
@@ -85,7 +86,7 @@ def fetch_from_proxyscrape():
             for line in r.text.splitlines():
                 line = line.strip()
                 if line and ":" in line:
-                    out.add(line)
+                    out.add(f"{line}:{DEFAULT_CREDENTIALS}")
     except Exception:
         pass
     return out
@@ -96,7 +97,7 @@ def fetch_from_free_proxy_list():
         r = requests.get(FREE_PROXY_URL, headers={"User-Agent": USER_AGENT}, timeout=12)
         if r.status_code == 200 and r.text:
             matches = IPPORT_RE.findall(r.text)
-            out.update(matches)
+            out.update(f"{match}:{DEFAULT_CREDENTIALS}" for match in matches)
     except Exception:
         pass
     return out
@@ -109,7 +110,7 @@ def fetch_from_raw_github(url):
             for line in r.text.splitlines():
                 line = line.strip()
                 if line and ":" in line:
-                    out.add(line)
+                    out.add(f"{line}:{DEFAULT_CREDENTIALS}")
     except Exception:
         pass
     return out
@@ -124,7 +125,7 @@ def fetch_all_sources():
         ("SpeedX SOCKS5", lambda: fetch_from_raw_github(SPEEDX_SOCKS)),
     ]
     combined = set()
-    print(f"{Fore.CYAN}Fetching from multiple sources...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Fetching UHQ proxies from multiple sources...{Style.RESET_ALL}")
     for name, fn in sources:
         try:
             items = fn()
@@ -140,7 +141,8 @@ async def check_single_proxy(session, proxy, seen_live, file_lock, bot, measure_
     if proxy in seen_live:
         return
     try:
-        proxy_url = "http://" + proxy
+        ip_port = proxy.split(":")[:2]
+        proxy_url = "http://" + ":".join(ip_port)
         start = time.time()
         async with session.get(TEST_URL, proxy=proxy_url, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as resp:
             latency_ms = (time.time() - start) * 1000
@@ -152,7 +154,7 @@ async def check_single_proxy(session, proxy, seen_live, file_lock, bot, measure_
                         seen_live.add(proxy)
                         print(f"{Fore.GREEN}[LIVE]{Style.RESET_ALL} {proxy} ({int(latency_ms)}ms)")
                         try:
-                            await bot.send_message(CHAT_ID, f"LIVE Proxy: {proxy} ({int(latency_ms)}ms)")
+                            await bot.send_message(CHAT_ID, f"UHQ Proxy: {proxy} ({int(latency_ms)}ms)")
                         except Exception as e:
                             print(f"{Fore.YELLOW}Failed to send to Telegram: {e}{Style.RESET_ALL}")
     except Exception:
@@ -181,7 +183,7 @@ async def prune_live_proxies(seen_live, bot):
         if not seen_live:
             await asyncio.sleep(PRUNE_INTERVAL)
             continue
-        print(f"{Fore.CYAN}Pruning live proxies...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}Pruning UHQ proxies...{Style.RESET_ALL}")
         proxies = list(seen_live)
         seen_live_copy = set()
         connector = aiohttp.TCPConnector(ssl=False, limit_per_host=CONCURRENCY)
@@ -199,7 +201,7 @@ async def prune_live_proxies(seen_live, bot):
                     pass
         seen_live.clear()
         seen_live.update(seen_live_copy)
-        print(f"{Fore.GREEN}Pruning complete. Live proxies now: {len(seen_live)}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Pruning complete. Live UHQ proxies now: {len(seen_live)}{Style.RESET_ALL}")
         await asyncio.sleep(PRUNE_INTERVAL)
 
 # ---------------- MAIN LOOP ---------------- #
@@ -215,13 +217,13 @@ async def run_continuous(bot):
         print(f"\n{Fore.MAGENTA}=== Cycle {cycle} @ {now} ==={Style.RESET_ALL}")
         proxies = fetch_all_sources()
         new = [p for p in proxies if p not in seen_all]
-        print(f"{Fore.CYAN}New proxies to test this cycle: {len(new)}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}New UHQ proxies to test this cycle: {len(new)}{Style.RESET_ALL}")
         for p in new:
             seen_all.add(p)
         if new:
             await check_batch(new, seen_live, bot)
         else:
-            print(f"{Fore.YELLOW}No new proxies found this cycle.{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}No new UHQ proxies found this cycle.{Style.RESET_ALL}")
         cycle += 1
         await asyncio.sleep(REFRESH_INTERVAL)
 
@@ -230,7 +232,7 @@ async def main_async():
     bot = Bot(token=TOKEN)
     print_banner()
     try:
-        await bot.send_message(CHAT_ID, f"{YUICHI_BANNER}\nContinuous Proxy Collector — By YUICHI\nStarted!")
+        await bot.send_message(CHAT_ID, f"{YUICHI_BANNER}\nUHQ Proxy Collector — By YUICHI\nStarted!")
     except Exception as e:
         print(f"{Fore.YELLOW}Failed to send start message: {e}{Style.RESET_ALL}")
     try:
@@ -238,7 +240,7 @@ async def main_async():
     except KeyboardInterrupt:
         print(f"\n{Fore.RED}Stopped by user. Bye from YUICHI.{Style.RESET_ALL}")
         try:
-            await bot.send_message(CHAT_ID, "Proxy Collector stopped.")
+            await bot.send_message(CHAT_ID, "UHQ Proxy Collector stopped.")
         except:
             pass
 
