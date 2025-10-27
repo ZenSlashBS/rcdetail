@@ -8,17 +8,12 @@ WORKDIR /app
 COPY bot.py .
 
 # Install system dependencies (if any, e.g., for aiohttp or other libraries)
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
+RUN apt-get update && apt-get install -y
 # Install Python dependencies
 RUN pip install --no-cache-dir \
-    aiohttp \
     requests \
-    tqdm \
-    colorama \
-    aiogram==2.25.1
+    bs4 \
+    colorama
 
 # Command to run the script
 CMD ["python", "bot.py"]
